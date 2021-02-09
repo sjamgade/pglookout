@@ -60,6 +60,7 @@ class PgLookout:
         self.cluster_monitor = None
         self.syslog_handler = None
         self.cluster_nodes_change_time = time.monotonic()
+        self.last_known_master_connection = datetime.datetime.min
         self.cluster_monitor_check_queue = Queue()
         self.failover_decision_queue = Queue()
         self.load_config()
@@ -187,6 +188,7 @@ class PgLookout:
                     standby_nodes[instance] = state
                 elif state['connection']:
                     connected_master_nodes[instance] = state
+                    self.last_known_master_connection = parse_iso_datetime(state["fetch_time"])
                 elif not state['connection']:
                     disconnected_master_nodes[instance] = state
             else:
@@ -335,7 +337,8 @@ class PgLookout:
                 self.cluster_monitor_check_queue.put("Master is missing, ask for immediate state check")
                 master_known_to_be_gone = self.current_master in self.known_gone_nodes
                 now = time.monotonic()
-                config_timeout_exceeded = (now - self.cluster_nodes_change_time) >= self.missing_master_from_config_timeout
+                reload_or_last_connect = max(self.cluster_nodes_change_time, self.last_known_master_connection)
+                config_timeout_exceeded = (now - reload_or_last_connect)  >= self.missing_master_from_config_timeout
                 if master_known_to_be_gone or config_timeout_exceeded:
                     # we've seen a master at some point in time, but now it's
                     # missing, perform an immediate failover to promote one of
